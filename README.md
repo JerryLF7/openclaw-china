@@ -596,10 +596,11 @@ flowchart TD
 
 **欢迎同学们一起开发~**
 
+<img src="https://github.com/user-attachments/assets/093a70c0-2c8b-4280-94be-5d0b6cd3c8e2" alt="二维码" width="50%" />
 
 <img src="https://github.com/user-attachments/assets/1790b876-436b-4900-b4bf-fa8cc971f830" alt="二维码" width="50%" />
 
-<img src="https://github.com/user-attachments/assets/139969ac-8176-410b-8556-d9f15a3a11d1" alt="二维码" width="50%" />
+
 
 
 如果二维码过期，可以加下我微信备注说明来意：a28417416
