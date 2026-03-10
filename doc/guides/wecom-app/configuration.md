@@ -66,7 +66,7 @@
 
 教程可参考此文档的【注册并登录企业微信】：https://github.com/BytePioneer-AI/openclaw-china/blob/main/doc/guides/wecom/configuration.md
 
-### 步骤零：安装 wecom-app 插件
+### 步骤一：安装 wecom-app 插件
 
 支持两种安装方式，按需选择：
 
@@ -343,6 +343,19 @@ openclaw gateway restart
 3. 查看 OpenClaw 日志确认消息接收
 4. 等待 AI 回复
 
+### 3. 验证 `/verbose on` 实时输出（可选）
+
+如果你经常使用工具调用、文件读取或命令执行，建议顺手验证一下 verbose 输出是否正常：
+
+1. 先在企业微信会话里发送 `/verbose on`
+2. 再发送一个会触发多步执行的请求，例如“读取几个文件后总结差异”
+3. 正常情况下，verbose 日志会**按段陆续发送**
+4. 不会等全部任务完成后，再把所有日志合并成一条消息统一发出
+
+> 提示：
+> - 这个能力依赖 `corpId`、`corpSecret`、`agentId` 已正确配置，且企业微信 IP 白名单允许当前出口 IP。
+> - 如果你刚升级插件，请记得执行一次 `openclaw gateway restart`。
+
 ---
 
 ## 步骤六：在个人微信使用
@@ -541,6 +554,51 @@ ffmpeg -i in.wav -ar 8000 -ac 1 -c:a amr_nb out.amr
 2. 检查是否已配置 IP 白名单
 3. 查看 OpenClaw 日志获取详细错误信息
 
+### Q: 开启 `/verbose on` 后，日志还是等全部结束才一起发？
+
+正常情况下，`wecom-app` 会把 verbose 输出按 chunk 逐段主动发送，而不是等任务结束后整包合并发送。
+
+如果你仍然看到“最后一次性发完”，按下面顺序排查：
+
+1. **确认插件已升级到最新代码**
+
+   如果你是源码安装，请执行：
+
+   ```bash
+   git pull origin main
+   pnpm install
+   pnpm build
+   openclaw gateway restart
+   ```
+
+2. **确认主动发送能力完整可用**
+
+   以下字段必须正确：
+
+   - `corpId`
+   - `corpSecret`
+   - `agentId`
+
+   同时要确认企业微信后台的 **可信 IP / IP 白名单** 已包含当前 OpenClaw 出口 IP。
+
+3. **确认当前运行的是新进程**
+
+   如果你使用的是守护进程或后台运行方式，只改代码不重启不会生效。建议执行：
+
+   ```bash
+   openclaw gateway restart
+   ```
+
+4. **重新做一次最小验证**
+
+   - 先发 `/verbose on`
+   - 再发一个会触发多步执行的请求
+   - 观察日志是否分多条陆续到达
+
+> 说明：
+> - 企业微信客户端本身可能有轻微展示延迟，但正常表现仍应是“逐段陆续出现”，而不是“最后只来一大条”。
+> - 如果主动发送能力不可用，插件会回退到已有的 stream 占位/刷新路径，但不会有同样的实时逐段推送体验。
+
 ---
 
 ## 高级配置
@@ -644,7 +702,8 @@ cp -a ~/.openclaw/extensions/openclaw-china/extensions/wecom-app/skills/wecom-ap
 - 签名校验 + 解密/加密回包
 - 支持 **JSON + XML** 两种入站格式
 - 长文本分片（企业微信单条约 2048 bytes 限制）
-- stream 占位/刷新（为适配企业微信 5 秒响应限制的缓冲式输出）
+- stream 占位/刷新（为适配企业微信 5 秒响应限制）
+- 开启 `/verbose on` 时，工具日志与中间回复支持按 chunk 逐段主动发送，而不是结束后整包合并
 
 ### 入站媒体（产品级留存）
 
@@ -662,6 +721,7 @@ cp -a ~/.openclaw/extensions/openclaw-china/extensions/wecom-app/skills/wecom-ap
 ### 出站（主动发送）
 
 - 支持主动发送文本
+- 主动发送文本会自动按企业微信单条长度限制分片
 - 支持主动发送媒体（按 MIME/扩展名识别 image/voice/file）
 - Markdown 降级：`stripMarkdown()` 将 Markdown 转为企业微信可显示的纯文本
 
