@@ -5,6 +5,8 @@ const mocks = vi.hoisted(() => ({
   getAccessToken: vi.fn(),
   sendC2CInputNotify: vi.fn(),
   sendC2CMessage: vi.fn(),
+  sendProactiveC2CMessage: vi.fn(),
+  sendProactiveGroupMessage: vi.fn(),
   sendGroupMessage: vi.fn(),
   sendChannelMessage: vi.fn(),
   sendFileQQBot: vi.fn(),
@@ -14,6 +16,8 @@ vi.mock("./client.js", () => ({
   getAccessToken: mocks.getAccessToken,
   sendC2CInputNotify: mocks.sendC2CInputNotify,
   sendC2CMessage: mocks.sendC2CMessage,
+  sendProactiveC2CMessage: mocks.sendProactiveC2CMessage,
+  sendProactiveGroupMessage: mocks.sendProactiveGroupMessage,
   sendGroupMessage: mocks.sendGroupMessage,
   sendChannelMessage: mocks.sendChannelMessage,
 }));
@@ -59,6 +63,44 @@ describe("qqbotOutbound event_id fallback", () => {
         markdown: false,
       })
     );
+  });
+
+  it("uses proactive group sends when no passive reply context exists", async () => {
+    mocks.sendProactiveGroupMessage.mockResolvedValueOnce({ id: "group-proactive-1", timestamp: 11 });
+
+    const result = await qqbotOutbound.sendText({
+      cfg: baseCfg,
+      to: "group:g-proactive-1",
+      text: "| col1 | col2 |\n| --- | --- |\n| a | b |",
+    });
+
+    expect(result).toEqual({ channel: "qqbot", messageId: "group-proactive-1", timestamp: 11 });
+    expect(mocks.sendProactiveGroupMessage).toHaveBeenCalledWith({
+      accessToken: "token-1",
+      groupOpenid: "g-proactive-1",
+      content: "| col1 | col2 |\n| --- | --- |\n| a | b |",
+      markdown: true,
+    });
+    expect(mocks.sendGroupMessage).not.toHaveBeenCalled();
+  });
+
+  it("uses proactive c2c sends when no passive reply context exists", async () => {
+    mocks.sendProactiveC2CMessage.mockResolvedValueOnce({ id: "c2c-proactive-1", timestamp: 12 });
+
+    const result = await qqbotOutbound.sendText({
+      cfg: baseCfg,
+      to: "user:u-proactive-1",
+      text: "| col1 | col2 |\n| --- | --- |\n| a | b |",
+    });
+
+    expect(result).toEqual({ channel: "qqbot", messageId: "c2c-proactive-1", timestamp: 12 });
+    expect(mocks.sendProactiveC2CMessage).toHaveBeenCalledWith({
+      accessToken: "token-1",
+      openid: "u-proactive-1",
+      content: "| col1 | col2 |\n| --- | --- |\n| a | b |",
+      markdown: true,
+    });
+    expect(mocks.sendC2CMessage).not.toHaveBeenCalled();
   });
 
   it("retries group text with event_id when msg_id is expired", async () => {

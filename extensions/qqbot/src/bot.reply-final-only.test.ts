@@ -2,7 +2,9 @@ import { describe, expect, it, vi } from "vitest";
 import type { Logger } from "@openclaw-china/shared";
 import {
   evaluateReplyFinalOnlyDelivery,
+  hasQQBotMarkdownTable,
   isQQBotGroupMessageInterfaceBlocked,
+  resolveQQBotTextReplyRefs,
   resolveQQBotNoReplyFallback,
   sanitizeQQBotOutboundText,
   sendQQBotMediaWithFallback,
@@ -106,6 +108,67 @@ describe("sendQQBotMediaWithFallback", () => {
 
     expect(sendText).not.toHaveBeenCalled();
     expect(onDelivered).not.toHaveBeenCalled();
+  });
+});
+
+describe("resolveQQBotTextReplyRefs", () => {
+  it("drops passive reply refs for c2c markdown tables", () => {
+    const refs = resolveQQBotTextReplyRefs({
+      to: "user:u-1",
+      text: "| col1 | col2 |\n| --- | --- |\n| a | b |",
+      markdownSupport: true,
+      replyToId: "reply-1",
+      replyEventId: "event-1",
+    });
+
+    expect(refs).toEqual({
+      forceProactive: true,
+      replyToId: undefined,
+      replyEventId: undefined,
+    });
+  });
+
+  it("keeps passive reply refs for plain c2c text", () => {
+    const refs = resolveQQBotTextReplyRefs({
+      to: "user:u-1",
+      text: "普通文本回复",
+      markdownSupport: true,
+      replyToId: "reply-2",
+      replyEventId: "event-2",
+    });
+
+    expect(refs).toEqual({
+      forceProactive: false,
+      replyToId: "reply-2",
+      replyEventId: "event-2",
+    });
+  });
+
+  it("keeps passive reply refs for group markdown tables", () => {
+    const refs = resolveQQBotTextReplyRefs({
+      to: "group:g-1",
+      text: "| col1 | col2 |\n| --- | --- |\n| a | b |",
+      markdownSupport: true,
+      replyToId: "reply-3",
+      replyEventId: "event-3",
+    });
+
+    expect(refs).toEqual({
+      forceProactive: false,
+      replyToId: "reply-3",
+      replyEventId: "event-3",
+    });
+  });
+});
+
+describe("hasQQBotMarkdownTable", () => {
+  it("detects standard markdown tables", () => {
+    expect(hasQQBotMarkdownTable("| col1 | col2 |\n| --- | --- |\n| a | b |")).toBe(true);
+  });
+
+  it("ignores bullet lists and plain text", () => {
+    expect(hasQQBotMarkdownTable("- item 1\n- item 2")).toBe(false);
+    expect(hasQQBotMarkdownTable("普通文本")).toBe(false);
   });
 });
 

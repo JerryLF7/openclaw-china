@@ -149,17 +149,11 @@ function buildMessageBody(params: {
   markdown?: boolean;
 }): Record<string, unknown> {
   const msgSeq = nextMsgSeq(params.messageId ?? params.eventId);
-  const body: Record<string, unknown> = params.markdown
-    ? {
-        markdown: { content: params.content },
-        msg_type: 2,
-        msg_seq: msgSeq,
-      }
-    : {
-        content: params.content,
-        msg_type: 0,
-        msg_seq: msgSeq,
-      };
+  const body = buildTextMessageBody({
+    content: params.content,
+    markdown: params.markdown,
+  });
+  body.msg_seq = msgSeq;
 
   if (params.messageId) {
     body.msg_id = params.messageId;
@@ -167,6 +161,31 @@ function buildMessageBody(params: {
     body.event_id = params.eventId;
   }
   return body;
+}
+
+function buildTextMessageBody(params: {
+  content: string;
+  markdown?: boolean;
+}): Record<string, unknown> {
+  return params.markdown
+    ? {
+        markdown: { content: params.content },
+        msg_type: 2,
+      }
+    : {
+        content: params.content,
+        msg_type: 0,
+      };
+}
+
+function buildProactiveMessageBody(params: {
+  content: string;
+  markdown?: boolean;
+}): Record<string, unknown> {
+  if (!params.content.trim()) {
+    throw new Error("QQBot proactive message content is empty");
+  }
+  return buildTextMessageBody(params);
 }
 
 export async function sendC2CMessage(params: {
@@ -200,6 +219,36 @@ export async function sendGroupMessage(params: {
     content: params.content,
     messageId: params.messageId,
     eventId: params.eventId,
+    markdown: params.markdown,
+  });
+  return apiPost(params.accessToken, `/v2/groups/${params.groupOpenid}/messages`, body, {
+    timeout: 15000,
+  });
+}
+
+export async function sendProactiveC2CMessage(params: {
+  accessToken: string;
+  openid: string;
+  content: string;
+  markdown?: boolean;
+}): Promise<{ id: string; timestamp: number | string }> {
+  const body = buildProactiveMessageBody({
+    content: params.content,
+    markdown: params.markdown,
+  });
+  return apiPost(params.accessToken, `/v2/users/${params.openid}/messages`, body, {
+    timeout: 15000,
+  });
+}
+
+export async function sendProactiveGroupMessage(params: {
+  accessToken: string;
+  groupOpenid: string;
+  content: string;
+  markdown?: boolean;
+}): Promise<{ id: string; timestamp: number | string }> {
+  const body = buildProactiveMessageBody({
+    content: params.content,
     markdown: params.markdown,
   });
   return apiPost(params.accessToken, `/v2/groups/${params.groupOpenid}/messages`, body, {

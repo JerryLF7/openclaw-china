@@ -709,6 +709,7 @@ const VOICE_EMOTION_TAG_RE =
   /\[(?:happy|excited|calm|sad|angry|frustrated|softly|whispers|loudly|cheerfully|deadpan|sarcastically|laughs|sighs|chuckles|gasps|pause|slowly|rushed|hesitates|playfully|warmly|gently)\]/gi;
 const TTS_LIKE_RAW_TEXT_RE =
   /\[\[\s*(?:tts(?::text)?|\/tts(?::text)?|audio_as_voice|reply_to_current|reply_to\s*:)/i;
+const MARKDOWN_TABLE_SEPARATOR_RE = /^\|?(?:\s*:?-{3,}:?\s*\|)+(?:\s*:?-{3,}:?)?\|?$/;
 
 function extractFinalBlocks(text: string): string | undefined {
   const matches = Array.from(text.matchAll(FINAL_BLOCK_RE));
@@ -787,6 +788,61 @@ export function evaluateReplyFinalOnlyDelivery(params: {
     return { skipDelivery: false, suppressText: true };
   }
   return { skipDelivery: true, suppressText: false };
+}
+
+function isQQBotC2CTarget(to: string): boolean {
+  const trimmed = to.trim();
+  const raw = trimmed.startsWith("qqbot:") ? trimmed.slice("qqbot:".length) : trimmed;
+  return !raw.startsWith("group:") && !raw.startsWith("channel:");
+}
+
+export function hasQQBotMarkdownTable(text: string): boolean {
+  const lines = text.replace(/\r\n/g, "\n").split("\n");
+  for (let index = 0; index < lines.length - 1; index += 1) {
+    const header = lines[index]?.trim() ?? "";
+    const separator = lines[index + 1]?.trim() ?? "";
+    if (!header.includes("|") || !MARKDOWN_TABLE_SEPARATOR_RE.test(separator)) {
+      continue;
+    }
+
+    const headerColumns = header.split("|").filter((column) => column.trim()).length;
+    const separatorColumns = separator.split("|").filter((column) => column.trim()).length;
+    if (headerColumns >= 2 && separatorColumns >= 2) {
+      return true;
+    }
+  }
+  return false;
+}
+
+export function resolveQQBotTextReplyRefs(params: {
+  to: string;
+  text: string;
+  markdownSupport: boolean;
+  replyToId?: string;
+  replyEventId?: string;
+}): {
+  forceProactive: boolean;
+  replyToId?: string;
+  replyEventId?: string;
+} {
+  const forceProactive =
+    params.markdownSupport &&
+    isQQBotC2CTarget(params.to) &&
+    hasQQBotMarkdownTable(params.text);
+
+  if (!forceProactive) {
+    return {
+      forceProactive: false,
+      replyToId: params.replyToId,
+      replyEventId: params.replyEventId,
+    };
+  }
+
+  return {
+    forceProactive: true,
+    replyToId: undefined,
+    replyEventId: undefined,
+  };
 }
 
 export async function sendQQBotMediaWithFallback(params: {
@@ -1122,6 +1178,7 @@ async function dispatchToAgent(params: {
     };
 
     const replyFinalOnly = qqCfg.replyFinalOnly ?? false;
+    const markdownSupport = qqCfg.markdownSupport ?? true;
 
     const deliver = async (payload: unknown, info?: { kind?: string }): Promise<void> => {
       const typed = payload as { text?: string; mediaUrl?: string; mediaUrls?: string[] } | undefined;
@@ -1169,14 +1226,24 @@ async function dispatchToAgent(params: {
         const converted = textApi?.convertMarkdownTables
           ? textApi.convertMarkdownTables(textToSend, resolvedTableMode)
           : textToSend;
+        const textReplyRefs = resolveQQBotTextReplyRefs({
+          to: target.to,
+          text: converted,
+          markdownSupport,
+          replyToId: inbound.messageId,
+          replyEventId: inbound.eventId,
+        });
+        if (textReplyRefs.forceProactive) {
+          logger.info("C2C markdown table detected; sending proactive QQ message to preserve table rendering");
+        }
         const chunks = chunkText(converted);
         for (const chunk of chunks) {
           const result = await qqbotOutbound.sendText({
             cfg: { channels: { qqbot: qqCfg } },
             to: target.to,
             text: chunk,
-            replyToId: inbound.messageId,
-            replyEventId: inbound.eventId,
+            replyToId: textReplyRefs.replyToId,
+            replyEventId: textReplyRefs.replyEventId,
           });
           if (result.error) {
             logger.error(`sendText failed: ${result.error}`);

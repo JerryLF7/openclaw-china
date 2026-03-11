@@ -20,7 +20,10 @@ import {
   MediaFileType,
   clearTokenCache,
   getAccessToken,
+  sendC2CMessage,
   sendChannelMessage,
+  sendProactiveC2CMessage,
+  sendProactiveGroupMessage,
   sendGroupMessage,
   uploadC2CMedia,
   uploadGroupMedia,
@@ -140,6 +143,86 @@ describe("getAccessToken", () => {
       }),
       expect.any(Object)
     );
+  });
+
+  it("includes passive reply metadata for C2C markdown messages", async () => {
+    mocks.httpPost.mockResolvedValue({
+      id: "msg-c2c-1",
+      timestamp: 1,
+    });
+
+    await sendC2CMessage({
+      accessToken: "token-1",
+      openid: "UserABC123XYZ",
+      content: "| col1 | col2 |\n| --- | --- |\n| a | b |",
+      messageId: "msg-raw-c2c-1",
+      markdown: true,
+    });
+
+    expect(mocks.httpPost).toHaveBeenCalledWith(
+      "https://api.sgroup.qq.com/v2/users/UserABC123XYZ/messages",
+      expect.objectContaining({
+        markdown: { content: "| col1 | col2 |\n| --- | --- |\n| a | b |" },
+        msg_id: "msg-raw-c2c-1",
+        msg_type: 2,
+        msg_seq: expect.any(Number),
+      }),
+      expect.any(Object)
+    );
+  });
+
+  it("omits passive reply metadata for proactive C2C markdown messages", async () => {
+    mocks.httpPost.mockResolvedValue({
+      id: "msg-c2c-2",
+      timestamp: 2,
+    });
+
+    await sendProactiveC2CMessage({
+      accessToken: "token-1",
+      openid: "UserABC123XYZ",
+      content: "| col1 | col2 |\n| --- | --- |\n| a | b |",
+      markdown: true,
+    });
+
+    const body = mocks.httpPost.mock.calls[0]?.[1];
+    expect(mocks.httpPost).toHaveBeenCalledWith(
+      "https://api.sgroup.qq.com/v2/users/UserABC123XYZ/messages",
+      {
+        markdown: { content: "| col1 | col2 |\n| --- | --- |\n| a | b |" },
+        msg_type: 2,
+      },
+      expect.any(Object)
+    );
+    expect(body).not.toHaveProperty("msg_seq");
+    expect(body).not.toHaveProperty("msg_id");
+    expect(body).not.toHaveProperty("event_id");
+  });
+
+  it("omits passive reply metadata for proactive group markdown messages", async () => {
+    mocks.httpPost.mockResolvedValue({
+      id: "msg-group-2",
+      timestamp: 2,
+    });
+
+    await sendProactiveGroupMessage({
+      accessToken: "token-2",
+      groupOpenid: "GroupABC123XYZ",
+      content: "| col1 | col2 |\n| --- | --- |\n| a | b |",
+      markdown: true,
+    });
+
+    const body = mocks.httpPost.mock.calls[0]?.[1];
+    expect(mocks.httpPost).toHaveBeenCalledWith(
+      "https://api.sgroup.qq.com/v2/groups/GroupABC123XYZ/messages",
+      {
+        markdown: { content: "| col1 | col2 |\n| --- | --- |\n| a | b |" },
+        msg_type: 2,
+      },
+      expect.any(Object)
+    );
+    expect(body).not.toHaveProperty("msg_seq");
+    expect(body).not.toHaveProperty("msg_id");
+    expect(body).not.toHaveProperty("event_id");
   });
 
   it("preserves channel_id casing for channel message sends", async () => {

@@ -13,6 +13,8 @@ import {
   getAccessToken,
   sendC2CInputNotify,
   sendC2CMessage,
+  sendProactiveC2CMessage,
+  sendProactiveGroupMessage,
   sendGroupMessage,
   sendChannelMessage,
 } from "./client.js";
@@ -125,6 +127,19 @@ function shouldSendTextAsFollowupForMedia(mediaUrl: string): boolean {
   return detectMediaType(stripTitleFromUrl(mediaUrl)) === "file";
 }
 
+function buildPassiveReplyRefs(params: {
+  replyToId?: string;
+  replyEventId?: string;
+}): { messageId?: string; eventId?: string } {
+  if (params.replyToId) {
+    return { messageId: params.replyToId };
+  }
+  if (params.replyEventId) {
+    return { eventId: params.replyEventId };
+  }
+  return {};
+}
+
 export const qqbotOutbound = {
   deliveryMode: "direct" as const,
   textChunkLimit: 1500,
@@ -152,13 +167,23 @@ export const qqbotOutbound = {
 
     try {
       if (target.kind === "group") {
+        if (!replyToId && !replyEventId) {
+          const result = await sendProactiveGroupMessage({
+            accessToken,
+            groupOpenid: target.id,
+            content: text,
+            markdown,
+          });
+          return { channel: "qqbot", messageId: result.id, timestamp: result.timestamp };
+        }
+
         let result: { id: string; timestamp: number | string };
         try {
           result = await sendGroupMessage({
             accessToken,
             groupOpenid: target.id,
             content: text,
-            messageId: replyToId,
+            ...buildPassiveReplyRefs({ replyToId, replyEventId }),
             markdown: groupMarkdown,
           });
         } catch (err) {
@@ -176,13 +201,13 @@ export const qqbotOutbound = {
             reason: summarizeError(err),
           });
           try {
-          result = await sendGroupMessage({
-            accessToken,
-            groupOpenid: target.id,
-            content: text,
-            eventId: replyEventId,
-            markdown: groupMarkdown,
-          });
+            result = await sendGroupMessage({
+              accessToken,
+              groupOpenid: target.id,
+              content: text,
+              eventId: replyEventId,
+              markdown: groupMarkdown,
+            });
             logEventIdFallback({
               phase: "success",
               action: "text",
@@ -218,13 +243,23 @@ export const qqbotOutbound = {
         return { channel: "qqbot", messageId: result.id, timestamp: result.timestamp };
       }
 
+      if (!replyToId && !replyEventId) {
+        const result = await sendProactiveC2CMessage({
+          accessToken,
+          openid: target.id,
+          content: text,
+          markdown,
+        });
+        return { channel: "qqbot", messageId: result.id, timestamp: result.timestamp };
+      }
+
       let result: { id: string; timestamp: number | string };
       try {
         result = await sendC2CMessage({
           accessToken,
           openid: target.id,
           content: text,
-          messageId: replyToId,
+          ...buildPassiveReplyRefs({ replyToId, replyEventId }),
           markdown,
         });
       } catch (err) {
@@ -242,13 +277,13 @@ export const qqbotOutbound = {
           reason: summarizeError(err),
         });
         try {
-        result = await sendC2CMessage({
-          accessToken,
-          openid: target.id,
-          content: text,
-          eventId: replyEventId,
-          markdown,
-        });
+          result = await sendC2CMessage({
+            accessToken,
+            openid: target.id,
+            content: text,
+            eventId: replyEventId,
+            markdown,
+          });
           logEventIdFallback({
             phase: "success",
             action: "text",
