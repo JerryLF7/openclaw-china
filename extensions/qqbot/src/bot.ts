@@ -1454,32 +1454,20 @@ async function dispatchToAgent(params: {
       bufferedC2CMarkdownMediaUrls.push(next);
     };
 
-    const flushBufferedC2CMarkdownReply = async (): Promise<void> => {
-      if (
-        !useC2CMarkdownTransport ||
-        (bufferedC2CMarkdownTexts.length === 0 && bufferedC2CMarkdownMediaUrls.length === 0)
-      ) {
-        bufferedC2CMarkdownTexts = [];
-        bufferedC2CMarkdownMediaUrls = [];
-        bufferedC2CMarkdownMediaSeen.clear();
-        return;
-      }
-
-      const combinedText = bufferedC2CMarkdownTexts.join("\n\n").trim();
-      const combinedMediaUrls = [...bufferedC2CMarkdownMediaUrls];
-      bufferedC2CMarkdownTexts = [];
-      bufferedC2CMarkdownMediaUrls = [];
-      bufferedC2CMarkdownMediaSeen.clear();
-
-      const normalizedCombinedText = normalizeQQBotRenderedMarkdown(combinedText);
-      const { markdownImageUrls, mediaQueue } = splitQQBotMarkdownTransportMediaUrls(combinedMediaUrls);
+    const sendC2CMarkdownTransportPayload = async (params: {
+      text: string;
+      mediaUrls: string[];
+      phase: "buffered" | "immediate";
+    }): Promise<void> => {
+      const normalizedText = normalizeQQBotRenderedMarkdown(params.text);
+      const { markdownImageUrls, mediaQueue } = splitQQBotMarkdownTransportMediaUrls(params.mediaUrls);
       const finalMarkdownText = await normalizeQQBotMarkdownImages({
-        text: normalizedCombinedText,
+        text: normalizedText,
         appendImageUrls: markdownImageUrls,
       });
       const textReplyRefs = resolveQQBotTextReplyRefs({
         to: target.to,
-        text: finalMarkdownText || normalizedCombinedText,
+        text: finalMarkdownText || normalizedText,
         markdownSupport,
         c2cMarkdownDeliveryMode,
         replyToId: inbound.messageId,
@@ -1492,7 +1480,7 @@ async function dispatchToAgent(params: {
       logger.info(
         `delivery=${deliveryLabel} to=${target.to} segments=${textSegments.length} media=${mediaQueue.length} ` +
           `replyToId=${textReplyRefs.replyToId ? "yes" : "no"} replyEventId=${textReplyRefs.replyEventId ? "yes" : "no"} ` +
-          `tableMode=${String(resolvedTableMode)} chunkMode=${String(chunkMode ?? "default")}`
+          `phase=${params.phase} tableMode=${String(resolvedTableMode)} chunkMode=${String(chunkMode ?? "default")}`
       );
 
       await sendQQBotMediaWithFallback({
@@ -1522,7 +1510,8 @@ async function dispatchToAgent(params: {
           const chunk = chunks[chunkIndex] ?? "";
           logger.info(
             `delivery=${deliveryLabel} segment=${segmentIndex + 1}/${textSegments.length} ` +
-              `chunk=${chunkIndex + 1}/${chunks.length} preview=${formatQQBotOutboundPreview(chunk)}`
+              `chunk=${chunkIndex + 1}/${chunks.length} phase=${params.phase} ` +
+              `preview=${formatQQBotOutboundPreview(chunk)}`
           );
           const result = await qqbotOutbound.sendText({
             cfg: { channels: { qqbot: qqCfg } },
@@ -1533,14 +1522,38 @@ async function dispatchToAgent(params: {
             accountId: outboundAccountId,
           });
           if (result.error) {
-            logger.error(`send buffered QQ markdown reply failed: ${result.error}`);
+            logger.error(`send QQ markdown reply failed: ${result.error}`);
             markGroupMessageInterfaceBlocked(result.error);
           } else {
-            logger.info(`sent buffered QQ markdown reply (len=${chunk.length})`);
+            logger.info(`sent QQ markdown reply (phase=${params.phase}, len=${chunk.length})`);
             markReplyDelivered();
           }
         }
       }
+    };
+
+    const flushBufferedC2CMarkdownReply = async (): Promise<void> => {
+      if (
+        !useC2CMarkdownTransport ||
+        (bufferedC2CMarkdownTexts.length === 0 && bufferedC2CMarkdownMediaUrls.length === 0)
+      ) {
+        bufferedC2CMarkdownTexts = [];
+        bufferedC2CMarkdownMediaUrls = [];
+        bufferedC2CMarkdownMediaSeen.clear();
+        return;
+      }
+
+      const combinedText = bufferedC2CMarkdownTexts.join("\n\n").trim();
+      const combinedMediaUrls = [...bufferedC2CMarkdownMediaUrls];
+      bufferedC2CMarkdownTexts = [];
+      bufferedC2CMarkdownMediaUrls = [];
+      bufferedC2CMarkdownMediaSeen.clear();
+
+      await sendC2CMarkdownTransportPayload({
+        text: combinedText,
+        mediaUrls: combinedMediaUrls,
+        phase: "buffered",
+      });
     };
 
     const deliver = async (payload: unknown, info?: { kind?: string }): Promise<void> => {
@@ -1586,13 +1599,24 @@ async function dispatchToAgent(params: {
       const textToSend = suppressText ? "" : cleanedText;
 
       if (useC2CMarkdownTransport) {
-        if (textToSend) {
-          bufferedC2CMarkdownTexts = appendQQBotBufferedText(bufferedC2CMarkdownTexts, textToSend);
+        const shouldBufferFinalOnlyPayload = replyFinalOnly && (!info?.kind || info.kind === "final");
+
+        if (shouldBufferFinalOnlyPayload) {
+          if (textToSend) {
+            bufferedC2CMarkdownTexts = appendQQBotBufferedText(bufferedC2CMarkdownTexts, textToSend);
+          }
+
+          for (const url of mediaQueue) {
+            bufferC2CMarkdownMedia(url);
+          }
+          return;
         }
 
-        for (const url of mediaQueue) {
-          bufferC2CMarkdownMedia(url);
-        }
+        await sendC2CMarkdownTransportPayload({
+          text: textToSend,
+          mediaUrls: mediaQueue,
+          phase: "immediate",
+        });
         return;
       }
 

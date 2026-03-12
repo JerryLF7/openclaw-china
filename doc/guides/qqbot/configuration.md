@@ -143,7 +143,7 @@ openclaw config set gateway.http.endpoints.chatCompletions.enabled true
 | allowFrom | string[] | [] | 私聊白名单 |
 | groupAllowFrom | string[] | [] | 群聊白名单 |
 | textChunkLimit | number | 1500 | 文本分块长度；C2C Markdown transport 默认尽量保持整条单消息发送，仅在超过长度限制时才分块 |
-| replyFinalOnly | boolean | false | 是否仅发送最终回复文本（不会阻断媒体工具结果，如 TTS 语音） |
+| replyFinalOnly | boolean | false | 是否仅发送最终回复文本；开启后会抑制非 final 的纯文本日志/工具输出，但不会阻断媒体工具结果（如 TTS 语音） |
 | c2cMarkdownDeliveryMode | string | "proactive-table-only" | 私聊 C2C Markdown transport 发送策略：`passive` 保持整条回复走被动接口，`proactive-table-only` 在回复中检测到 Markdown 表格时让整条回复改走主动接口，`proactive-all` 让所有私聊 Markdown 回复统一走主动接口 |
 | autoSendLocalPathMedia | boolean | true | 是否自动把回复文本中的本地图片路径识别为媒体并发送；设为 `false` 时，类似 `/root/.openclaw/media/qqbot/inbound/...jpeg` 的路径会保留在文本里，适合展示“证据 / 文件路径：...” |
 | longTaskNoticeDelayMs | number | 30000 | 首条正式回复超过该时长仍未发送时，自动补发“任务处理时间较长，请稍等，我还在继续处理。”；设为 `0` 可关闭 |
@@ -169,7 +169,7 @@ openclaw config set channels.qqbot.autoSendLocalPathMedia false
 - `autoSendLocalPathMedia=true`：裸本地图片路径会自动作为媒体发送
 - `autoSendLocalPathMedia=false`：裸本地图片路径保留为文本
 - 显式 `MEDIA:` 指令仍会继续按媒体发送
-- 
+
 ### 3.1 私聊 Markdown 渲染策略
 
 如需通过配置控制 QQ 私聊的 Markdown 发送方式，可以设置：
@@ -182,8 +182,27 @@ openclaw config set channels.qqbot.c2cMarkdownDeliveryMode proactive-all
 
 - `passive`：整条 C2C Markdown 回复保持被动发送，Markdown 文本和本地富媒体都会保留 `replyToId/replyEventId`
 - `proactive-table-only`：当最终回复里包含 Markdown 表格时，整条 C2C 回复统一改走主动发送
-- `proactive-all`：所有 C2C Markdown 回复统一在回复结束后走主动发送，适合兼容标题、引用、分割线、表格等渲染问题
-  
+- `proactive-all`：所有 C2C Markdown 回复统一走主动发送，适合兼容标题、引用、分割线、表格等渲染问题
+
+补充说明：
+
+- 在 QQ 私聊启用 Markdown transport（`markdownSupport=true`）后，默认 `replyFinalOnly=false` 时，`/verbose on` 产生的非 final 文本日志会即时发送，一个日志一个消息，不再合并到最终回复中
+- 如果开启 `replyFinalOnly=true`，非 final 纯文本日志仍会被抑制，只保留最终回复；带媒体的工具结果仍会照常发送
+
+### 3.2 验证 `/verbose on` 实时输出
+
+建议在升级后做一次快速自检：
+
+1. 在 QQ 私聊里发送 `/verbose on`
+2. 再发送一个会触发工具调用、长任务或文件处理的请求
+3. 观察回包是否符合预期
+
+预期结果：
+
+- `replyFinalOnly=false`：verbose/tool 日志会按处理过程逐条回发，一个日志一个消息
+- 最终答复仍会单独发送，不会把前面的日志重新合并
+- `replyFinalOnly=true`：非 final 纯文本日志不会单独发送，但媒体类工具结果仍可投递
+
 ### 4. 多账户配置
 
 如需配置多个 QQ 机器人，可以使用 `accounts` 对象（键为账户 ID）：
@@ -238,7 +257,7 @@ openclaw config set channels.qqbot.c2cMarkdownDeliveryMode proactive-all
 - 当前实现支持文本消息收发与图片发送（C2C/群聊）
 - QQ C2C/群聊富媒体接口暂不支持通用文件（`file_type=4`，例如 PDF），这是官方接口限制而非插件缺陷，会降级为文本提示
 - 频道内暂不支持媒体发送（会降级为文本 + URL）
-- 不支持平台级流式输出
+- 不支持平台级流式输出；但 QQ 私聊在启用 Markdown transport 且 `replyFinalOnly=false` 时，可以按消息逐条回发非 final verbose/tool 日志
 - 定时提醒通过 OpenClaw cron 触发（无需额外配置）
 - 插件会自动记录通过策略校验的已知目标，供主动发送脚本复用
 

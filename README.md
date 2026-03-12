@@ -121,6 +121,10 @@
 <details>
 <summary><strong>点击展开更新日志</strong></summary>
 
+### 2026-03-12
+- `qqbot` 调整 QQ 私聊 C2C Markdown transport：在开启 `/verbose on` 且 `replyFinalOnly=false` 时，非 final 的工具/日志输出恢复为即时发送，一个日志一条消息，不再合并到最终回复里。
+- `qqbot` 保持 `replyFinalOnly=true` 的既有语义：非 final 纯文本输出继续被抑制，但媒体类工具结果仍可正常投递。
+
 ### 2026-03-11
 - `qqbot` 调整 C2C Markdown transport：私聊 Markdown 回复现在保留原始 Markdown 文本，公网图片自动补 QQ 图片尺寸语法，本地图片继续走富媒体 API。
 - `qqbot` 新增 `c2cMarkdownDeliveryMode` 的整条回复级主动/被动策略说明；对于“带表格后标题、引用、任务列表等 Markdown 不稳定”的场景，推荐直接使用 `proactive-all`。
@@ -431,6 +435,8 @@ openclaw config set channels.qqbot.c2cMarkdownDeliveryMode proactive-all
 - `proactive-table-only`：仅当回复里出现 Markdown 表格时，整条 C2C 回复改走主动发送
 - `proactive-all`：所有 C2C Markdown 回复统一改走主动发送
 - C2C 主动 Markdown transport 会尽量保留原始 Markdown，并默认整条单消息发送；只有超出长度限制时才继续分块
+- 在 QQ 私聊启用 Markdown transport（`markdownSupport=true`）后，开启 `/verbose on` 且 `replyFinalOnly=false` 时，非 final 的工具/日志输出会即时回发，一个日志一个消息
+- 如果同时开启 `replyFinalOnly=true`，非 final 纯文本日志仍会被抑制，只保留最终回复；媒体类工具结果不受影响
 - 如果你发现“不带表格时基本正常，但带表格后标题、引用、任务列表不稳定”，优先使用 `proactive-all`；这通常是 QQ 被动回复接口本身的渲染限制
 
 主动发送与已知目标：
