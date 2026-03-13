@@ -4,6 +4,7 @@
   "description": "QQ 开放平台机器人消息渠道插件",
   "version": "0.1.0",
   "channels": ["qqbot"],
+  "skills": ["./skills"],
   "configSchema": {
     "type": "object",
     "additionalProperties": false,

@@ -392,7 +392,29 @@ await sendProactiveQQBotMessage({
 
 ---
 
-## 七、可选操作：开启语音转文本
+## 七、内置 Skill（自动加载）
+
+`qqbot` 插件现在会随包提供插件级 skill：`qqbot-contact-send`。
+
+- 目录位置：`extensions/qqbot/skills/qqbot-contact-send`
+- 只要 `qqbot` 插件处于启用状态，新会话就会自动把这个 skill 加入 `<available_skills>`
+- 无需再把该目录手工复制到 `<workspace>/skills` 或 `~/.openclaw/skills`
+- 如果 workspace 或全局技能目录里已经有同名 skill，仍按 OpenClaw 默认优先级覆盖插件内置版本
+
+这个 skill 主要用于：
+
+- 基于 `~/.openclaw/qqbot/data/known-targets.json` 按联系人名解析 QQBot 发送目标
+- 默认优先使用当前会话的 `accountId` 过滤联系人，降低多账号误发风险
+- 生成可直接传给 `message` tool 的发送参数
+
+如果你刚安装或升级了插件但还没看到该 skill，建议：
+
+1. 确认 `qqbot` 插件已启用
+2. 新开一个会话，或重启一次 gateway
+
+---
+
+## 八、可选操作：开启语音转文本
 
 如果你希望 QQ 语音消息可以自动转文字后再交给 Agent 处理，可按下面步骤配置腾讯云 ASR（录音文件识别极速版）。
 
