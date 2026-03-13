@@ -145,6 +145,7 @@ openclaw config set gateway.http.endpoints.chatCompletions.enabled true
 | enabled | boolean | true | 打开或关闭 QQ 渠道 |
 | appId | string | - | QQ 机器人后台里的 `AppID` |
 | clientSecret | string | - | QQ 机器人后台里的 `AppSecret` |
+| displayAliases | object | - | 私聊用户显示名 alias 映射。首期仅对 direct 用户生效，支持键 `user:<openid>`、`<openid>`、`senderId` |
 | dmPolicy | string | "open" | 谁可以直接私聊机器人。`open` 全开放，`pairing` 只允许已配对来源，`allowlist` 只允许白名单 |
 | groupPolicy | string | "open" | 群里谁可以触发机器人。`open` 全开放，`allowlist` 只允许白名单，`disabled` 直接关闭群聊处理 |
 | requireMention | boolean | true | 群里是否必须先 `@` 机器人，它才回复 |
@@ -250,6 +251,9 @@ openclaw config set channels.qqbot.c2cMarkdownDeliveryMode proactive-all
           "name": "主机器人",
           "appId": "1234567890",
           "clientSecret": "secret-1",
+          "displayAliases": {
+            "user:u-alice": "Alice"
+          },
           "markdownSupport": true,
           "dmPolicy": "open",
           "groupPolicy": "open",
@@ -271,6 +275,7 @@ openclaw config set channels.qqbot.c2cMarkdownDeliveryMode proactive-all
 > - 顶层配置（如 `enabled`、`dmPolicy`）作为默认值，账户内配置会覆盖顶层配置。
 > - `defaultAccount` 指定默认使用的账户 ID，不配置时默认为 `"default"`。
 > - 账户内未指定的字段会继承顶层配置。
+> - `displayAliases` 也是同样的规则；同一个 alias key 同时出现在顶层和账户内时，以账户内为准。
 > - 已知目标、引用缓存等本地数据也会按 `accountId` 分开记录，避免多个机器人串数据。
 
 多 agent 分流（bindings）示例：
@@ -322,6 +327,7 @@ openclaw daemon start
 - 旧版 `~/.openclaw/data/qqbot/known-targets.json` 会在首次访问时自动迁移到新路径
 - 机器人见过、并且通过策略校验的用户或群，会自动记录到这里
 - 多账号场景会按 `accountId` 分开记录
+- 私聊用户的 `displayName` 会优先使用 `displayAliases`，否则按 `remark_name > card > nickname > username > 历史 displayName > openid/senderId` 生成
 - 目标格式如下：
   - 私聊用户：`user:<c2cOpenid>`
   - QQ 群：`group:<group_openid>`

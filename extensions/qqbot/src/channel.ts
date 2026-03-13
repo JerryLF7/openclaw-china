@@ -136,6 +136,10 @@ export const qqbotPlugin = {
         defaultAccount: { type: "string" },
         appId: { type: ["string", "number"] },
         clientSecret: { type: "string" },
+        displayAliases: {
+          type: "object",
+          additionalProperties: { type: "string" },
+        },
         asr: {
           type: "object",
           additionalProperties: false,
@@ -181,6 +185,10 @@ export const qqbotPlugin = {
               enabled: { type: "boolean" },
               appId: { type: ["string", "number"] },
               clientSecret: { type: "string" },
+              displayAliases: {
+                type: "object",
+                additionalProperties: { type: "string" },
+              },
               asr: {
                 type: "object",
                 additionalProperties: false,

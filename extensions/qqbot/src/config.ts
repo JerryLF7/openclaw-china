@@ -13,6 +13,12 @@ const optionalCoercedString = z.preprocess(
   z.string().min(1).optional()
 );
 
+const displayAliasesSchema = z
+  .record(
+    z.preprocess((value) => toTrimmedString(value), z.string().min(1))
+  )
+  .optional();
+
 export const QQBotC2CMarkdownDeliveryModeSchema = z
   .enum(["passive", "proactive-table-only", "proactive-all"])
   .optional()
@@ -27,6 +33,7 @@ const QQBotAccountSchema = z.object({
   enabled: z.boolean().optional(),
   appId: optionalCoercedString,
   clientSecret: optionalCoercedString,
+  displayAliases: displayAliasesSchema,
   asr: z
     .object({
       enabled: z.boolean().optional().default(false),
@@ -70,6 +77,23 @@ export type QQBotAccountConfig = z.input<typeof QQBotAccountSchema>;
 const DEFAULT_INBOUND_MEDIA_DIR = join(homedir(), ".openclaw", "media", "qqbot", "inbound");
 const DEFAULT_INBOUND_MEDIA_KEEP_DAYS = 7;
 const DEFAULT_INBOUND_MEDIA_TEMP_DIR = join(tmpdir(), "qqbot-media");
+
+function normalizeDisplayAliasesMap(raw: unknown): Record<string, string> {
+  if (!raw || typeof raw !== "object") {
+    return {};
+  }
+
+  const aliases: Record<string, string> = {};
+  for (const [rawKey, rawValue] of Object.entries(raw as Record<string, unknown>)) {
+    const key = rawKey.trim();
+    const value = toTrimmedString(rawValue);
+    if (!key || !value) {
+      continue;
+    }
+    aliases[key] = value;
+  }
+  return aliases;
+}
 
 export function resolveInboundMediaDir(config: QQBotAccountConfig | undefined): string {
   return String(config?.inboundMedia?.dir ?? "").trim() || DEFAULT_INBOUND_MEDIA_DIR;
@@ -139,7 +163,17 @@ export function mergeQQBotAccountConfig(cfg: PluginConfig, accountId: string): Q
   const base = (cfg.channels?.qqbot ?? {}) as QQBotConfig;
   const { accounts: _ignored, defaultAccount: _ignored2, ...baseConfig } = base;
   const account = resolveAccountConfig(cfg, accountId) ?? {};
-  return { ...baseConfig, ...account };
+  const mergedDisplayAliases = {
+    ...normalizeDisplayAliasesMap(baseConfig.displayAliases),
+    ...normalizeDisplayAliasesMap(account.displayAliases),
+  };
+  return {
+    ...baseConfig,
+    ...account,
+    ...(Object.keys(mergedDisplayAliases).length > 0
+      ? { displayAliases: mergedDisplayAliases }
+      : {}),
+  };
 }
 
 // ── Credential helpers ────────────────────────────────────────────────────────

@@ -456,6 +456,7 @@ openclaw config set channels.qqbot.c2cMarkdownDeliveryMode proactive-all
 - 已知目标默认保存到 `~/.openclaw/qqbot/data/known-targets.json`
 - 旧版 `~/.openclaw/data/qqbot/known-targets.json` 会在首次访问时自动迁移到新路径
 - 注册表会记录通过策略校验的 `user:` / `group:` / `channel:` 目标
+- 私聊入站显示名会优先取 `displayAliases`，再按 `remark_name > card > nickname > username > 历史 displayName > 平台 ID` 回退
 - 推荐主动发送时使用 `user:` 与 `group:` 目标
 
 ```ts
@@ -478,6 +479,27 @@ await sendProactiveQQBotMessage({
   to: targets[0]?.target ?? "user:your-openid",
   text: "这是一条主动发送的 QQ 消息",
 });
+```
+
+如果 QQ 私聊里经常只能看到 `openid`，可以在配置里补一个本地 alias：
+
+```json
+{
+  "channels": {
+    "qqbot": {
+      "displayAliases": {
+        "user:u-123456": "Alice"
+      },
+      "accounts": {
+        "bot2": {
+          "displayAliases": {
+            "user:u-123456": "Alice (bot2)"
+          }
+        }
+      }
+    }
+  }
+}
 ```
 
 </details>

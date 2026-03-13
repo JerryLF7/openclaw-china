@@ -3,6 +3,7 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import {
   QQBotConfigSchema,
+  mergeQQBotAccountConfig,
   resolveInboundMediaDir,
   resolveInboundMediaKeepDays,
   resolveQQBotAutoSendLocalPathMedia,
@@ -48,6 +49,9 @@ describe("QQBotConfigSchema", () => {
     const cfg = QQBotConfigSchema.parse({
       appId: 102824485,
       clientSecret: "secret",
+      displayAliases: {
+        "user:u-top": "Top Alias",
+      },
       asr: {
         enabled: true,
         appId: 123456,
@@ -58,6 +62,9 @@ describe("QQBotConfigSchema", () => {
         main: {
           appId: 987654321,
           clientSecret: "child-secret",
+          displayAliases: {
+            "user:u-child": "Child Alias",
+          },
           asr: {
             enabled: true,
             appId: 654321,
@@ -69,8 +76,14 @@ describe("QQBotConfigSchema", () => {
     });
 
     expect(cfg.appId).toBe("102824485");
+    expect(cfg.displayAliases).toEqual({
+      "user:u-top": "Top Alias",
+    });
     expect(cfg.asr?.appId).toBe("123456");
     expect(cfg.accounts?.main?.appId).toBe("987654321");
+    expect(cfg.accounts?.main?.displayAliases).toEqual({
+      "user:u-child": "Child Alias",
+    });
     expect(cfg.accounts?.main?.asr?.appId).toBe("654321");
   });
 
@@ -106,6 +119,36 @@ describe("QQBotConfigSchema", () => {
       appId: "app",
       secretId: "sid",
       secretKey: "skey",
+    });
+  });
+
+  it("merges displayAliases with account-level overrides", () => {
+    const merged = mergeQQBotAccountConfig(
+      {
+        channels: {
+          qqbot: {
+            displayAliases: {
+              "user:u-top": "Top Alias",
+              "user:u-shared": "Shared Top",
+            },
+            accounts: {
+              main: {
+                displayAliases: {
+                  "user:u-main": "Main Alias",
+                  "user:u-shared": "Shared Main",
+                },
+              },
+            },
+          },
+        },
+      },
+      "main"
+    );
+
+    expect(merged.displayAliases).toEqual({
+      "user:u-top": "Top Alias",
+      "user:u-shared": "Shared Main",
+      "user:u-main": "Main Alias",
     });
   });
 

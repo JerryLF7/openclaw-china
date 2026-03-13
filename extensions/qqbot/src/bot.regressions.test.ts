@@ -8,6 +8,7 @@ const outboundMocks = vi.hoisted(() => ({
 }));
 
 const proactiveMocks = vi.hoisted(() => ({
+  getKnownQQBotTarget: vi.fn(),
   upsertKnownQQBotTarget: vi.fn(),
 }));
 
@@ -20,6 +21,7 @@ vi.mock("./outbound.js", () => ({
 }));
 
 vi.mock("./proactive.js", () => ({
+  getKnownQQBotTarget: proactiveMocks.getKnownQQBotTarget,
   upsertKnownQQBotTarget: proactiveMocks.upsertKnownQQBotTarget,
 }));
 
