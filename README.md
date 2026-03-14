@@ -128,6 +128,7 @@
 - `qqbot` 现在会优先使用 `~/.openclaw/qqbot/data/known-targets.json` 里的 `displayName` 作为私聊用户显示名；如果没有，再回退到 `displayAliases`，最后才使用稳定 ID，减少多账号和备注名场景下的识别成本。
 - `qqbot` 新增内置 `qqbot-contact-send` skill，并会随插件自动注册到新会话的 `<available_skills>`。模型可直接基于 `known-targets.json` 按联系人备注/显示名解析发送对象，并默认优先使用当前会话的 `accountId` 过滤目标，降低误发给同名联系人的风险。
 - `qqbot` 在 QQ 私聊里开启 `/verbose on` 且 `replyFinalOnly=false` 后，assistant 的普通过渡说明和工具日志现在都会实时发送，并按真实生成顺序交错出现，不会再出现“日志先刷完、说明最后补发”的时序错乱。
+- `qqbot` 新增 `停止` / `/stop` 快速通道。当前任务正在执行时，这类中断命令会绕过本地排队立即发送给 OpenClaw，并丢弃同一会话里尚未处理的排队消息，减少“停不下来还继续串消息”的情况。
 - 这次修复只影响 QQ 私聊/C2C 的实时回发路径；如果你保持 `replyFinalOnly=true`，行为仍然和以前一样，只发最终文本结果，媒体结果不受影响。
 
 ### 2026-03-13
