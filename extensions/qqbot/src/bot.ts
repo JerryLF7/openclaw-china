@@ -30,6 +30,7 @@ import {
   resolveQQBotAutoSendLocalPathMedia,
   mergeQQBotAccountConfig,
   DEFAULT_ACCOUNT_ID,
+  type QQBotC2CMarkdownChunkStrategy,
   type QQBotC2CMarkdownDeliveryMode,
   type QQBotAccountConfig,
   type PluginConfig,
@@ -1351,8 +1352,30 @@ const VOICE_EMOTION_TAG_RE =
 const TTS_LIKE_RAW_TEXT_RE =
   /\[\[\s*(?:tts(?::text)?|\/tts(?::text)?|audio_as_voice|reply_to_current|reply_to\s*:)/i;
 const MARKDOWN_TABLE_SEPARATOR_RE = /^\|?(?:\s*:?-{3,}:?\s*\|)+(?:\s*:?-{3,}:?)?\|?$/;
+const MARKDOWN_THEMATIC_BREAK_RE = /^\s{0,3}(?:(?:-\s*){3,}|(?:_\s*){3,}|(?:\*\s*){3,})$/;
+const MARKDOWN_ATX_HEADING_RE = /^\s{0,3}#{1,6}\s+\S/;
+const MARKDOWN_BLOCKQUOTE_RE = /^\s{0,3}>\s?/;
+const MARKDOWN_FENCE_RE = /^\s*(`{3,}|~{3,})(.*)$/;
+const MARKDOWN_LIST_ITEM_RE = /^\s*(?:[-+*]|\d+\.)\s+/;
+const MARKDOWN_LIST_CONTINUATION_RE = /^\s{2,}\S/;
+const MARKDOWN_INLINE_STRUCTURE_RE = /(?:\*\*[^*\n]+\*\*|__[^_\n]+__|`[^`\n]+`|~~[^~\n]+~~|\*[^*\n]+\*)/;
+const MARKDOWN_BOUNDARY_GUARD_RE = /[`*_~|]/;
 const EXPLICIT_MARKDOWN_FENCE_RE = /(^|\n)(`{3,}|~{3,})\s*(?:markdown|md)\s*\n([\s\S]*?)\n\2(?=\n|$)/gi;
 const GENERIC_MARKDOWN_FENCE_RE = /(^|\n)(`{3,}|~{3,})\s*\n([\s\S]*?)\n\2(?=\n|$)/g;
+
+type QQBotMarkdownBlockKind =
+  | "heading"
+  | "paragraph"
+  | "list"
+  | "blockquote"
+  | "table"
+  | "code"
+  | "thematic-break";
+
+type QQBotMarkdownBlock = {
+  kind: QQBotMarkdownBlockKind;
+  text: string;
+};
 
 function extractFinalBlocks(text: string): string | undefined {
   const matches = Array.from(text.matchAll(FINAL_BLOCK_RE));
@@ -1588,6 +1611,715 @@ export function normalizeQQBotRenderedMarkdown(text: string): string {
   );
 
   return changed ? next.trim() : text.trim();
+}
+
+function normalizeQQBotMarkdownSegment(text: string): string {
+  return text.replace(/\r\n/g, "\n").replace(/\n{3,}/g, "\n\n").trim();
+}
+
+function isBlankQQBotMarkdownLine(line: string): boolean {
+  return line.trim().length === 0;
+}
+
+function resolveQQBotFenceDelimiter(line: string): string | undefined {
+  const match = line.match(MARKDOWN_FENCE_RE);
+  return match?.[1];
+}
+
+function isQQBotFenceClosingLine(line: string, delimiter: string): boolean {
+  const escapedDelimiter = delimiter.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const closingRe = new RegExp(`^\\s*${escapedDelimiter}${delimiter[0]}*\\s*$`);
+  return closingRe.test(line);
+}
+
+function joinQQBotMarkdownPieces(parts: string[]): string {
+  return parts.filter(Boolean).join("\n\n").trim();
+}
+
+function isQQBotMarkdownTableStart(lines: string[], index: number): boolean {
+  const header = lines[index]?.trim() ?? "";
+  const separator = lines[index + 1]?.trim() ?? "";
+  return Boolean(header.includes("|") && MARKDOWN_TABLE_SEPARATOR_RE.test(separator));
+}
+
+function collectQQBotFencedCodeBlock(
+  lines: string[],
+  startIndex: number
+): { block: QQBotMarkdownBlock; nextIndex: number } {
+  const openingLine = lines[startIndex] ?? "";
+  const delimiter = resolveQQBotFenceDelimiter(openingLine) ?? "```";
+  let index = startIndex + 1;
+  while (index < lines.length) {
+    if (isQQBotFenceClosingLine(lines[index] ?? "", delimiter)) {
+      index += 1;
+      break;
+    }
+    index += 1;
+  }
+
+  return {
+    block: {
+      kind: "code",
+      text: lines.slice(startIndex, index).join("\n").trimEnd(),
+    },
+    nextIndex: index,
+  };
+}
+
+function collectQQBotMarkdownTableBlock(
+  lines: string[],
+  startIndex: number
+): { block: QQBotMarkdownBlock; nextIndex: number } {
+  let index = startIndex + 2;
+  while (index < lines.length) {
+    const line = lines[index] ?? "";
+    if (isBlankQQBotMarkdownLine(line) || !line.includes("|")) {
+      break;
+    }
+    index += 1;
+  }
+
+  return {
+    block: {
+      kind: "table",
+      text: lines.slice(startIndex, index).join("\n").trimEnd(),
+    },
+    nextIndex: index,
+  };
+}
+
+function collectQQBotBlockquoteBlock(
+  lines: string[],
+  startIndex: number
+): { block: QQBotMarkdownBlock; nextIndex: number } {
+  const collected: string[] = [];
+  let index = startIndex;
+
+  while (index < lines.length) {
+    const line = lines[index] ?? "";
+    if (MARKDOWN_BLOCKQUOTE_RE.test(line)) {
+      collected.push(line);
+      index += 1;
+      continue;
+    }
+    if (
+      isBlankQQBotMarkdownLine(line) &&
+      index + 1 < lines.length &&
+      MARKDOWN_BLOCKQUOTE_RE.test(lines[index + 1] ?? "")
+    ) {
+      collected.push(line);
+      index += 1;
+      continue;
+    }
+    break;
+  }
+
+  return {
+    block: {
+      kind: "blockquote",
+      text: collected.join("\n").trimEnd(),
+    },
+    nextIndex: index,
+  };
+}
+
+function collectQQBotListBlock(
+  lines: string[],
+  startIndex: number
+): { block: QQBotMarkdownBlock; nextIndex: number } {
+  const collected: string[] = [];
+  let index = startIndex;
+
+  while (index < lines.length) {
+    const line = lines[index] ?? "";
+    if (isBlankQQBotMarkdownLine(line)) {
+      break;
+    }
+    if (
+      MARKDOWN_FENCE_RE.test(line) ||
+      MARKDOWN_BLOCKQUOTE_RE.test(line) ||
+      MARKDOWN_ATX_HEADING_RE.test(line) ||
+      MARKDOWN_THEMATIC_BREAK_RE.test(line) ||
+      isQQBotMarkdownTableStart(lines, index)
+    ) {
+      break;
+    }
+    if (
+      collected.length > 0 &&
+      !MARKDOWN_LIST_ITEM_RE.test(line) &&
+      !MARKDOWN_LIST_CONTINUATION_RE.test(line)
+    ) {
+      collected.push(line);
+      index += 1;
+      continue;
+    }
+
+    collected.push(line);
+    index += 1;
+  }
+
+  return {
+    block: {
+      kind: "list",
+      text: collected.join("\n").trimEnd(),
+    },
+    nextIndex: index,
+  };
+}
+
+function collectQQBotParagraphBlock(
+  lines: string[],
+  startIndex: number
+): { block: QQBotMarkdownBlock; nextIndex: number } {
+  const collected: string[] = [];
+  let index = startIndex;
+
+  while (index < lines.length) {
+    const line = lines[index] ?? "";
+    if (isBlankQQBotMarkdownLine(line)) {
+      break;
+    }
+    if (
+      collected.length > 0 &&
+      (MARKDOWN_FENCE_RE.test(line) ||
+        MARKDOWN_BLOCKQUOTE_RE.test(line) ||
+        MARKDOWN_ATX_HEADING_RE.test(line) ||
+        MARKDOWN_THEMATIC_BREAK_RE.test(line) ||
+        MARKDOWN_LIST_ITEM_RE.test(line) ||
+        isQQBotMarkdownTableStart(lines, index))
+    ) {
+      break;
+    }
+    collected.push(line);
+    index += 1;
+  }
+
+  return {
+    block: {
+      kind: "paragraph",
+      text: collected.join("\n").trimEnd(),
+    },
+    nextIndex: index,
+  };
+}
+
+function parseQQBotMarkdownBlocks(text: string): QQBotMarkdownBlock[] {
+  const lines = text.replace(/\r\n/g, "\n").split("\n");
+  const blocks: QQBotMarkdownBlock[] = [];
+  let index = 0;
+
+  while (index < lines.length) {
+    while (index < lines.length && isBlankQQBotMarkdownLine(lines[index] ?? "")) {
+      index += 1;
+    }
+    if (index >= lines.length) {
+      break;
+    }
+
+    const line = lines[index] ?? "";
+    if (MARKDOWN_FENCE_RE.test(line)) {
+      const result = collectQQBotFencedCodeBlock(lines, index);
+      blocks.push(result.block);
+      index = result.nextIndex;
+      continue;
+    }
+    if (isQQBotMarkdownTableStart(lines, index)) {
+      const result = collectQQBotMarkdownTableBlock(lines, index);
+      blocks.push(result.block);
+      index = result.nextIndex;
+      continue;
+    }
+    if (MARKDOWN_THEMATIC_BREAK_RE.test(line)) {
+      blocks.push({ kind: "thematic-break", text: line.trim() });
+      index += 1;
+      continue;
+    }
+    if (MARKDOWN_BLOCKQUOTE_RE.test(line)) {
+      const result = collectQQBotBlockquoteBlock(lines, index);
+      blocks.push(result.block);
+      index = result.nextIndex;
+      continue;
+    }
+    if (MARKDOWN_ATX_HEADING_RE.test(line)) {
+      blocks.push({ kind: "heading", text: line.trimEnd() });
+      index += 1;
+      continue;
+    }
+    if (MARKDOWN_LIST_ITEM_RE.test(line)) {
+      const result = collectQQBotListBlock(lines, index);
+      blocks.push(result.block);
+      index = result.nextIndex;
+      continue;
+    }
+
+    const result = collectQQBotParagraphBlock(lines, index);
+    blocks.push(result.block);
+    index = result.nextIndex;
+  }
+
+  return blocks;
+}
+
+function hasQQBotBoundaryGuard(text: string): boolean {
+  return MARKDOWN_BOUNDARY_GUARD_RE.test(text);
+}
+
+function isQQBotSafeMarkdownBoundary(text: string, index: number): boolean {
+  const left = text.slice(Math.max(0, index - 3), index).replace(/\s+/g, "");
+  const right = text.slice(index, Math.min(text.length, index + 3)).replace(/\s+/g, "");
+  const leftEdge = left.slice(-1);
+  const rightEdge = right.slice(0, 1);
+  return !hasQQBotBoundaryGuard(leftEdge) && !hasQQBotBoundaryGuard(rightEdge);
+}
+
+function findQQBotRegexBoundary(text: string, limit: number, pattern: RegExp): number | undefined {
+  const scopedText = text.slice(0, Math.min(limit + 1, text.length));
+  const regex = new RegExp(pattern.source, pattern.flags);
+  let match = regex.exec(scopedText);
+  let lastBoundary: number | undefined;
+
+  while (match) {
+    const boundary = match.index + match[0].length;
+    if (boundary > 0 && boundary <= limit && isQQBotSafeMarkdownBoundary(text, boundary)) {
+      lastBoundary = boundary;
+    }
+    match = regex.exec(scopedText);
+  }
+
+  return lastBoundary;
+}
+
+function findQQBotFallbackBoundary(text: string, limit: number): number {
+  const minIndex = Math.max(1, limit - 120);
+  for (let index = limit; index >= minIndex; index -= 1) {
+    if (isQQBotSafeMarkdownBoundary(text, index)) {
+      return index;
+    }
+  }
+  return limit;
+}
+
+function findQQBotSafeSplitIndex(text: string, limit: number): number {
+  const boundaryPatterns = [
+    /\n\n+/g,
+    /\n/g,
+    /[。！？.!?；;:：](?:\s+|$)/g,
+    /[,，](?:\s+|$)/g,
+    /\s+/g,
+  ];
+
+  for (const pattern of boundaryPatterns) {
+    const boundary = findQQBotRegexBoundary(text, limit, pattern);
+    if (boundary && boundary > 0) {
+      return boundary;
+    }
+  }
+
+  return findQQBotFallbackBoundary(text, limit);
+}
+
+function splitQQBotHardText(text: string, limit: number): string[] {
+  if (limit <= 0 || text.length <= limit) {
+    return [text];
+  }
+
+  const chunks: string[] = [];
+  let remaining = text;
+  while (remaining.length > limit) {
+    chunks.push(remaining.slice(0, limit));
+    remaining = remaining.slice(limit);
+  }
+  if (remaining) {
+    chunks.push(remaining);
+  }
+  return chunks;
+}
+
+function splitQQBotTextSafely(
+  text: string,
+  limit: number,
+  options?: { trimLeading?: boolean; trimTrailing?: boolean }
+): string[] {
+  if (limit <= 0 || text.length <= limit) {
+    return [text];
+  }
+
+  const trimLeading = options?.trimLeading ?? true;
+  const trimTrailing = options?.trimTrailing ?? true;
+  const chunks: string[] = [];
+  let remaining = text;
+
+  while (remaining.length > limit) {
+    const splitIndex = findQQBotSafeSplitIndex(remaining, limit);
+    let nextChunk = remaining.slice(0, splitIndex);
+    let nextRemaining = remaining.slice(splitIndex);
+
+    if (trimTrailing) {
+      nextChunk = nextChunk.trimEnd();
+    }
+    if (trimLeading) {
+      nextRemaining = nextRemaining.trimStart();
+    }
+
+    if (!nextChunk) {
+      const hardChunk = remaining.slice(0, limit);
+      chunks.push(hardChunk);
+      remaining = remaining.slice(hardChunk.length);
+      continue;
+    }
+
+    chunks.push(nextChunk);
+    remaining = nextRemaining;
+  }
+
+  const finalChunk = trimTrailing ? remaining.trimEnd() : remaining;
+  if (finalChunk) {
+    chunks.push(finalChunk);
+  }
+
+  return chunks;
+}
+
+function splitQQBotMarkdownLineBlock(text: string, limit: number): string[] {
+  if (limit <= 0 || text.length <= limit) {
+    return [text];
+  }
+
+  const lines = text.split("\n");
+  const chunks: string[] = [];
+  let currentLines: string[] = [];
+
+  const flushCurrent = (): void => {
+    if (currentLines.length === 0) {
+      return;
+    }
+    const chunk = currentLines.join("\n").trimEnd();
+    if (chunk) {
+      chunks.push(chunk);
+    }
+    currentLines = [];
+  };
+
+  for (const line of lines) {
+    const candidate = currentLines.length > 0 ? `${currentLines.join("\n")}\n${line}` : line;
+    if (candidate.length <= limit) {
+      currentLines.push(line);
+      continue;
+    }
+
+    flushCurrent();
+    if (line.length <= limit) {
+      currentLines.push(line);
+      continue;
+    }
+
+    for (const piece of splitQQBotTextSafely(line, limit, {
+      trimLeading: false,
+      trimTrailing: false,
+    })) {
+      if (piece) {
+        chunks.push(piece);
+      }
+    }
+  }
+
+  flushCurrent();
+  return chunks;
+}
+
+function splitQQBotMarkdownTableBlock(text: string, limit: number): string[] {
+  if (limit <= 0 || text.length <= limit) {
+    return [text];
+  }
+
+  const lines = text.split("\n");
+  const header = lines[0] ?? "";
+  const separator = lines[1] ?? "";
+  const rows = lines.slice(2);
+  const tablePrefix = `${header}\n${separator}`;
+  const chunks: string[] = [];
+  let currentRows: string[] = [];
+
+  const flushCurrent = (): void => {
+    if (currentRows.length === 0) {
+      return;
+    }
+    chunks.push(`${tablePrefix}\n${currentRows.join("\n")}`);
+    currentRows = [];
+  };
+
+  for (const row of rows) {
+    const candidate =
+      currentRows.length > 0
+        ? `${tablePrefix}\n${currentRows.join("\n")}\n${row}`
+        : `${tablePrefix}\n${row}`;
+    if (candidate.length <= limit) {
+      currentRows.push(row);
+      continue;
+    }
+
+    flushCurrent();
+    if (`${tablePrefix}\n${row}`.length <= limit) {
+      currentRows.push(row);
+      continue;
+    }
+
+    const maxRowLength = Math.max(16, limit - tablePrefix.length - 1);
+    for (const rowPiece of splitQQBotTextSafely(row, maxRowLength, {
+      trimLeading: false,
+      trimTrailing: false,
+    })) {
+      chunks.push(`${tablePrefix}\n${rowPiece}`);
+    }
+  }
+
+  flushCurrent();
+  return chunks.length > 0 ? chunks : [text];
+}
+
+function splitQQBotMarkdownCodeFence(text: string, limit: number): string[] {
+  if (limit <= 0 || text.length <= limit) {
+    return [text];
+  }
+
+  const lines = text.split("\n");
+  const openingLine = lines[0] ?? "```";
+  const delimiter = resolveQQBotFenceDelimiter(openingLine) ?? "```";
+  const hasClosingFence =
+    lines.length > 1 && isQQBotFenceClosingLine(lines[lines.length - 1] ?? "", delimiter);
+  const closingLine = hasClosingFence ? lines[lines.length - 1] ?? delimiter : delimiter;
+  const codeLines = lines.slice(1, hasClosingFence ? -1 : lines.length);
+  const fixedOverhead = openingLine.length + closingLine.length + 2;
+  const availableLineLength = Math.max(1, limit - fixedOverhead);
+  const chunks: string[] = [];
+  let currentCodeLines: string[] = [];
+
+  const flushCurrent = (): void => {
+    if (currentCodeLines.length === 0) {
+      return;
+    }
+    chunks.push(`${openingLine}\n${currentCodeLines.join("\n")}\n${closingLine}`);
+    currentCodeLines = [];
+  };
+
+  for (const codeLine of codeLines) {
+    const candidate =
+      currentCodeLines.length > 0
+        ? `${openingLine}\n${currentCodeLines.join("\n")}\n${codeLine}\n${closingLine}`
+        : `${openingLine}\n${codeLine}\n${closingLine}`;
+    if (candidate.length <= limit) {
+      currentCodeLines.push(codeLine);
+      continue;
+    }
+
+    flushCurrent();
+    if (`${openingLine}\n${codeLine}\n${closingLine}`.length <= limit) {
+      currentCodeLines.push(codeLine);
+      continue;
+    }
+
+    for (const linePiece of splitQQBotHardText(codeLine, availableLineLength)) {
+      chunks.push(`${openingLine}\n${linePiece}\n${closingLine}`);
+    }
+  }
+
+  flushCurrent();
+  return chunks.length > 0 ? chunks : [text];
+}
+
+function splitQQBotMarkdownBlock(block: QQBotMarkdownBlock, limit: number): string[] {
+  if (limit <= 0 || block.text.length <= limit) {
+    return [block.text];
+  }
+
+  switch (block.kind) {
+    case "table":
+      return splitQQBotMarkdownTableBlock(block.text, limit);
+    case "code":
+      return splitQQBotMarkdownCodeFence(block.text, limit);
+    case "blockquote":
+      return splitQQBotMarkdownLineBlock(block.text, limit);
+    case "list":
+      return splitQQBotMarkdownLineBlock(block.text, limit);
+    case "paragraph":
+    case "heading":
+      return splitQQBotTextSafely(block.text, limit);
+    case "thematic-break":
+      return [block.text];
+    default:
+      return [block.text];
+  }
+}
+
+function chunkQQBotStructuredMarkdown(text: string, limit: number): string[] {
+  const blocks = parseQQBotMarkdownBlocks(text);
+  if (blocks.length === 0 || limit <= 0) {
+    return [text.trim()];
+  }
+
+  const chunks: string[] = [];
+  let currentPieces: string[] = [];
+  let pendingPrefixPieces: string[] = [];
+
+  const flushCurrent = (): void => {
+    if (currentPieces.length === 0) {
+      return;
+    }
+    const chunk = joinQQBotMarkdownPieces(currentPieces);
+    if (chunk) {
+      chunks.push(chunk);
+    }
+    currentPieces = [];
+  };
+
+  const appendPiece = (piece: string): void => {
+    if (!piece) {
+      return;
+    }
+    const pieces = piece.length > limit ? splitQQBotTextSafely(piece, limit) : [piece];
+    for (const nextPiece of pieces) {
+      const normalizedPiece = nextPiece.trim();
+      if (!normalizedPiece) {
+        continue;
+      }
+      const candidate = joinQQBotMarkdownPieces([...currentPieces, normalizedPiece]);
+      if (currentPieces.length === 0 || candidate.length <= limit) {
+        currentPieces.push(normalizedPiece);
+        continue;
+      }
+      flushCurrent();
+      currentPieces.push(normalizedPiece);
+    }
+  };
+
+  const consumePendingPrefix = (piece: string): string => {
+    if (pendingPrefixPieces.length === 0) {
+      return piece;
+    }
+    const prefixed = joinQQBotMarkdownPieces([...pendingPrefixPieces, piece]);
+    pendingPrefixPieces = [];
+    return prefixed;
+  };
+
+  for (let index = 0; index < blocks.length; index += 1) {
+    const block = blocks[index];
+    if (!block) {
+      continue;
+    }
+
+    if (block.kind === "thematic-break") {
+      if (currentPieces.length > 0) {
+        const candidate = joinQQBotMarkdownPieces([...currentPieces, block.text]);
+        if (candidate.length <= limit) {
+          currentPieces.push(block.text);
+          continue;
+        }
+        flushCurrent();
+      }
+      pendingPrefixPieces.push(block.text);
+      continue;
+    }
+
+    if (block.kind === "heading") {
+      const headingText = consumePendingPrefix(block.text);
+      const nextBlock = blocks[index + 1];
+      if (nextBlock && nextBlock.kind !== "thematic-break") {
+        const nextPieces = splitQQBotMarkdownBlock(nextBlock, limit);
+        const firstBodyPiece = nextPieces[0];
+        if (firstBodyPiece) {
+          const pairedText = joinQQBotMarkdownPieces([headingText, firstBodyPiece]);
+          const pairedCandidate = joinQQBotMarkdownPieces([
+            ...currentPieces,
+            headingText,
+            firstBodyPiece,
+          ]);
+          if (
+            pairedText.length <= limit &&
+            (currentPieces.length === 0 || pairedCandidate.length <= limit)
+          ) {
+            currentPieces.push(headingText, firstBodyPiece);
+            for (let pieceIndex = 1; pieceIndex < nextPieces.length; pieceIndex += 1) {
+              appendPiece(nextPieces[pieceIndex] ?? "");
+            }
+            index += 1;
+            continue;
+          }
+          if (currentPieces.length > 0 && pairedText.length <= limit) {
+            flushCurrent();
+            currentPieces.push(headingText, firstBodyPiece);
+            for (let pieceIndex = 1; pieceIndex < nextPieces.length; pieceIndex += 1) {
+              appendPiece(nextPieces[pieceIndex] ?? "");
+            }
+            index += 1;
+            continue;
+          }
+        }
+      }
+
+      appendPiece(headingText);
+      continue;
+    }
+
+    const blockText = consumePendingPrefix(block.text);
+    for (const piece of splitQQBotMarkdownBlock({ ...block, text: blockText }, limit)) {
+      appendPiece(piece);
+    }
+  }
+
+  if (pendingPrefixPieces.length > 0 && currentPieces.length > 0) {
+    const trailingCandidate = joinQQBotMarkdownPieces([...currentPieces, ...pendingPrefixPieces]);
+    if (trailingCandidate.length <= limit) {
+      currentPieces.push(...pendingPrefixPieces);
+    }
+  }
+
+  flushCurrent();
+  return chunks.length > 0 ? chunks : [text.trim()];
+}
+
+export function looksLikeStructuredMarkdown(text: string): boolean {
+  const normalized = normalizeQQBotMarkdownSegment(text);
+  if (!normalized) {
+    return false;
+  }
+
+  const lines = normalized.split("\n");
+  if (hasQQBotMarkdownTable(normalized)) {
+    return true;
+  }
+
+  return (
+    normalized.includes("\n\n") ||
+    lines.some((line) => MARKDOWN_ATX_HEADING_RE.test(line)) ||
+    lines.some((line) => MARKDOWN_BLOCKQUOTE_RE.test(line)) ||
+    lines.some((line) => MARKDOWN_FENCE_RE.test(line)) ||
+    lines.some((line) => MARKDOWN_THEMATIC_BREAK_RE.test(line)) ||
+    lines.some((line) => MARKDOWN_LIST_ITEM_RE.test(line)) ||
+    MARKDOWN_INLINE_STRUCTURE_RE.test(normalized)
+  );
+}
+
+export function chunkC2CMarkdownText(params: {
+  text: string;
+  limit: number;
+  strategy?: QQBotC2CMarkdownChunkStrategy;
+  fallbackChunkText?: (text: string) => string[];
+}): string[] {
+  const normalized = params.text.trim();
+  if (!normalized) {
+    return [];
+  }
+
+  const strategy = params.strategy ?? "markdown-block";
+  if (strategy === "length") {
+    return params.fallbackChunkText ? params.fallbackChunkText(normalized) : [normalized];
+  }
+
+  if (params.limit <= 0 || !looksLikeStructuredMarkdown(normalized)) {
+    return params.fallbackChunkText ? params.fallbackChunkText(normalized) : [normalized];
+  }
+
+  return chunkQQBotStructuredMarkdown(normalized, params.limit);
 }
 
 export async function sendQQBotMediaWithFallback(params: {
@@ -2009,11 +2741,15 @@ async function dispatchToAgent(params: {
     const replyFinalOnly = qqCfg.replyFinalOnly ?? false;
     const markdownSupport = qqCfg.markdownSupport ?? true;
     const c2cMarkdownDeliveryMode = qqCfg.c2cMarkdownDeliveryMode ?? "proactive-table-only";
+    const c2cMarkdownChunkStrategy = qqCfg.c2cMarkdownChunkStrategy ?? "markdown-block";
     const isC2CTarget = isQQBotC2CTarget(target.to);
     const useC2CMarkdownTransport = markdownSupport && isC2CTarget;
     let bufferedC2CMarkdownTexts: string[] = [];
     let bufferedC2CMarkdownMediaUrls: string[] = [];
     const bufferedC2CMarkdownMediaSeen = new Set<string>();
+
+    const hasBufferedC2CMarkdownReply = (): boolean =>
+      bufferedC2CMarkdownTexts.length > 0 || bufferedC2CMarkdownMediaUrls.length > 0;
 
     const bufferC2CMarkdownMedia = (url?: string): void => {
       const next = url?.trim();
@@ -2047,14 +2783,22 @@ async function dispatchToAgent(params: {
         replyToId: inbound.messageId,
         replyEventId: inbound.eventId,
       });
-      const textSegments = finalMarkdownText ? [finalMarkdownText] : [];
+      const textChunks = finalMarkdownText
+        ? chunkC2CMarkdownText({
+            text: finalMarkdownText,
+            limit,
+            strategy: c2cMarkdownChunkStrategy,
+            fallbackChunkText: chunkText,
+          })
+        : [];
       const deliveryLabel = textReplyRefs.forceProactive
         ? "c2c-markdown-proactive"
         : "c2c-markdown-passive";
       logger.info(
-        `delivery=${deliveryLabel} to=${target.to} segments=${textSegments.length} media=${mediaQueue.length} ` +
+        `delivery=${deliveryLabel} to=${target.to} chunks=${textChunks.length} media=${mediaQueue.length} ` +
           `replyToId=${textReplyRefs.replyToId ? "yes" : "no"} replyEventId=${textReplyRefs.replyEventId ? "yes" : "no"} ` +
-          `phase=${params.phase} tableMode=${String(resolvedTableMode)} chunkMode=${String(chunkMode ?? "default")}`
+          `phase=${params.phase} tableMode=${String(resolvedTableMode)} chunkMode=${String(chunkMode ?? "default")} ` +
+          `chunkStrategy=${c2cMarkdownChunkStrategy}`
       );
 
       if (!shouldSuppressVisibleReplies()) {
@@ -2080,34 +2824,29 @@ async function dispatchToAgent(params: {
         return;
       }
 
-      for (let segmentIndex = 0; segmentIndex < textSegments.length; segmentIndex += 1) {
-        const segment = textSegments[segmentIndex] ?? "";
-        const chunks = chunkText(segment);
-        for (let chunkIndex = 0; chunkIndex < chunks.length; chunkIndex += 1) {
-          if (shouldSuppressVisibleReplies()) {
-            return;
-          }
-          const chunk = chunks[chunkIndex] ?? "";
-          logger.info(
-            `delivery=${deliveryLabel} segment=${segmentIndex + 1}/${textSegments.length} ` +
-              `chunk=${chunkIndex + 1}/${chunks.length} phase=${params.phase} ` +
-              `preview=${formatQQBotOutboundPreview(chunk)}`
-          );
-          const result = await qqbotOutbound.sendText({
-            cfg: { channels: { qqbot: qqCfg } },
-            to: target.to,
-            text: chunk,
-            replyToId: textReplyRefs.replyToId,
-            replyEventId: textReplyRefs.replyEventId,
-            accountId: outboundAccountId,
-          });
-          if (result.error) {
-            logger.error(`send QQ markdown reply failed: ${result.error}`);
-            markGroupMessageInterfaceBlocked(result.error);
-          } else {
-            logger.info(`sent QQ markdown reply (phase=${params.phase}, len=${chunk.length})`);
-            markReplyDelivered();
-          }
+      for (let chunkIndex = 0; chunkIndex < textChunks.length; chunkIndex += 1) {
+        if (shouldSuppressVisibleReplies()) {
+          return;
+        }
+        const chunk = textChunks[chunkIndex] ?? "";
+        logger.info(
+          `delivery=${deliveryLabel} segment=1/1 chunk=${chunkIndex + 1}/${textChunks.length} ` +
+            `phase=${params.phase} preview=${formatQQBotOutboundPreview(chunk)}`
+        );
+        const result = await qqbotOutbound.sendText({
+          cfg: { channels: { qqbot: qqCfg } },
+          to: target.to,
+          text: chunk,
+          replyToId: textReplyRefs.replyToId,
+          replyEventId: textReplyRefs.replyEventId,
+          accountId: outboundAccountId,
+        });
+        if (result.error) {
+          logger.error(`send QQ markdown reply failed: ${result.error}`);
+          markGroupMessageInterfaceBlocked(result.error);
+        } else {
+          logger.info(`sent QQ markdown reply (phase=${params.phase}, len=${chunk.length})`);
+          markReplyDelivered();
         }
       }
     };
@@ -2190,8 +2929,13 @@ async function dispatchToAgent(params: {
 
       if (useC2CMarkdownTransport) {
         const shouldBufferFinalOnlyPayload = replyFinalOnly && (!info?.kind || info.kind === "final");
+        const shouldBufferStructuredMarkdownPayload =
+          !replyFinalOnly &&
+          c2cMarkdownChunkStrategy === "markdown-block" &&
+          info?.kind !== "tool" &&
+          looksLikeStructuredMarkdown(textToSend);
 
-        if (shouldBufferFinalOnlyPayload) {
+        if (shouldBufferFinalOnlyPayload || shouldBufferStructuredMarkdownPayload) {
           if (textToSend) {
             bufferedC2CMarkdownTexts = appendQQBotBufferedText(bufferedC2CMarkdownTexts, textToSend);
           }
@@ -2200,6 +2944,13 @@ async function dispatchToAgent(params: {
             bufferC2CMarkdownMedia(url);
           }
           return;
+        }
+
+        if (hasBufferedC2CMarkdownReply()) {
+          await flushBufferedC2CMarkdownReply();
+          if (shouldSuppressVisibleReplies()) {
+            return;
+          }
         }
 
         await sendC2CMarkdownTransportPayload({
