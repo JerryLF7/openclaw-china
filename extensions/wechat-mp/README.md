@@ -37,6 +37,7 @@
       "messageMode": "safe",
       "replyMode": "active",
       "activeDeliveryMode": "split",
+      "renderMarkdown": true,
       "welcomeText": "你好，欢迎关注。"
     }
   }
@@ -52,7 +53,10 @@
    - `split`：每个日志 / chunk 单独发一条消息
    - `merged`：等待 reply pipeline 结束后合并成一条消息发送
 5. `replyMode=passive` 时始终单次 HTTP 回包，`activeDeliveryMode` 不生效。
-6. 推荐先用：
+6. `renderMarkdown` 控制 Markdown 格式渲染：
+   - `true`（默认）：自动将 Markdown 转换为公众号友好的纯文本格式
+   - `false`：保留原始 Markdown 格式，不做转换
+7. 推荐先用：
 
 ```bash
 pnpm -F @openclaw-china/wechat-mp build
