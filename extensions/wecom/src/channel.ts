@@ -20,6 +20,7 @@ import {
 } from "./config.js";
 import { appendWecomActiveStreamChunk, registerWecomWebhookTarget } from "./monitor.js";
 import { setWecomRuntime } from "./runtime.js";
+import { buildWecomAccountSnapshot, createDefaultWecomRuntime } from "./status.js";
 import { normalizeChunkForWecomWsStream } from "./bot.js";
 import {
   buildTempMediaUrl,
@@ -851,6 +852,19 @@ export const wecomPlugin = {
         };
       }
     },
+  },
+
+  status: {
+    defaultRuntime: createDefaultWecomRuntime(DEFAULT_ACCOUNT_ID),
+    buildAccountSnapshot: ({ account, runtime, probe }: {
+      account: ResolvedWecomAccount;
+      runtime?: Record<string, unknown>;
+      probe?: unknown;
+    }) => buildWecomAccountSnapshot({
+      account,
+      runtime,
+      probe,
+    }),
   },
 
   gateway: {
